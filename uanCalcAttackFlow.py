@@ -40,11 +40,6 @@ def calcAttackFlow(paramDict, X, Y):
     nc = X.shape[3]
 
 
-
-    #Set Target 
-    target_np = advTarget*np.ones((batchSize))
-
-
     #Reset
     tf.reset_default_graph()
 
@@ -58,15 +53,11 @@ def calcAttackFlow(paramDict, X, Y):
     targets = tf.placeholder(tf.int64, [None])
 
     #UAN definition
-    uan = attackFlowUAN.attackFlowUAN(lFlowMax, model, zSize, imSize, UANname, imFormat, nc, targeted, advTarget, seed)
+    uan = attackFlowUAN.attackFlowUAN(lFlowMax, model, zSize, imSize, UANname, imFormat, nc, targeted, advTarget, seed,tau)
 
-    #Train op
-    attackFlow, train_op = uan.createTrainOp(tau,lrate, images, targets)
-
-
+    
     #Run training
-    attack_np=uan.runTrain(X_TrainSubset, Y_TrainSubset, n_epochs, batchSize,images, targets,
-             cnnModelFile , train_op,saver, attackFlow)
+    outAttackFlow, pred1, pred2, perturbed_images_np=uan.runTrain(X_TrainSubset, Y_TrainSubset, n_epochs, batchSize,images, targets,
+             cnnModelFile , saver, lrate)
 
-
-    return attack_np
+    return outAttackFlow, pred1, pred2, perturbed_images_np

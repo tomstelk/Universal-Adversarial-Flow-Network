@@ -2,10 +2,10 @@ import tensorflow as tf
 import stadv
 import lossesLocal
 import numpy as np
-
+import uan_utils 
 class attackFlowUAN():
     
-    def __init__(self,lFlowMax, targetModel, zSize =100, imSize = (28,28), UANname = 'attack', imFormat = 'NHWC', nc=1, targeted=False, advTarget =0, seed=0):
+    def __init__(self,lFlowMax, targetModel, zSize =100, imSize = (28,28), UANname = 'attack', imFormat = 'NHWC', nc=1, targeted=False, advTarget =0, seed=0, tau=0.05):
         
         self.targetModel = targetModel
         self.zSize =zSize
@@ -18,7 +18,7 @@ class attackFlowUAN():
         self.targeted = targeted
         self.seed = seed
         self.trained = False
-        
+        self.tau = tau
         
     def genAttackFlow(self):
         
@@ -49,33 +49,40 @@ class attackFlowUAN():
         
         return attackFlowScaled, uan_var_list
     
-    def createTrainOp(self, tau, lrate, images, targets):
-    
+        
+    def runTrain(self,images_np, labels_np, n_epochs, batchSize,images, 
+                 targets,  targetModelFile , saver, lrate):
 
-        tau = tf.constant(tau, dtype=tf.float32, name='tau')        
+        #Size data
+        trainSetSize = images_np.shape[0]
+        numBatches = int(np.ceil(trainSetSize/batchSize))
+        
+        #Optimizatio param
+        tau_tf = tf.constant(self.tau, dtype=tf.float32, name='tau')        
+        
+        #Define attack flow field via UAN, and list UAN variables to opt over
         attackFlow, uan_var_list = self.genAttackFlow()
         
+        #Apply flow field and calculate logits
         perturbed_images = stadv.layers.flow_st(images, attackFlow, 'NHWC')
         logits = self.targetModel.get_logits(perturbed_images)
         
+        #If targetd use the adv target label, else use correct labels to opt away from
         if self.targeted:        
-            L_adv = lossesLocal.adv_loss(logits, targets)
+            L_adv = stadv.losses.adv_loss(logits, targets)
+            trainTargets = self.advTarget*np.ones(images_np.shape[0])
         else:
             L_adv = lossesLocal.adv_loss_untargeted(logits, targets)
-                
+            trainTargets = labels_np            
+            
+            
+        #Define loss function
         L_flow = stadv.losses.flow_loss(attackFlow, padding_mode='CONSTANT')
-        L_final = L_adv + tau * L_flow
+        L_final = L_adv + tau_tf * L_flow
 
+        #Define optimization
         optim=tf.train.GradientDescentOptimizer(learning_rate = lrate)
         train_op = optim.minimize(L_final, var_list = uan_var_list)
-        
-        return attackFlow, train_op
-    
-    def runTrain(self,images_np, labels_np, n_epochs, batchSize,images, 
-                 targets,  targetModelFile , train_op,saver,attackFlow):
-        
-        trainSetSize = images_np.shape[0]
-        numBatches = int(np.ceil(trainSetSize/batchSize))
         
         
         with tf.Session() as sess:
@@ -87,19 +94,26 @@ class attackFlowUAN():
         
                 for b in range(numBatches):
                     test_image=images_np[b*batchSize:(b+1)*batchSize]
-                    test_label = labels_np[b*batchSize:(b+1)*batchSize]
+                    test_label = trainTargets[b*batchSize:(b+1)*batchSize]
 
                     sess.run(train_op, feed_dict = {images:test_image,targets: test_label})
                     
-                perturbed_images = stadv.layers.flow_st(images_np,attackFlow)
-                pred1=sess.run(self.targetModel .make_pred(images), feed_dict = {images:images_np})
-                pred2=sess.run(self.targetModel .make_pred(perturbed_images), feed_dict = {images:images_np})
-                print ('Epoch: ' + str (i) + ', adv rate: ' + str(100*np.count_nonzero(pred2-pred1)/len(pred1)) + '%')
                 
+                pred_orig=sess.run(self.targetModel .make_pred(images), feed_dict = {images:images_np})
+                pred_perb=sess.run(self.targetModel .make_pred(perturbed_images), feed_dict = {images:images_np})
                 
+                print ('Epoch: ' + str (i) + ', adv rate: ' + 
+                       str(100*uan_utils.advRate(self.targeted, self.advTarget,pred_perb, pred_orig,labels_np )) + '%')
+                
+            #Output attack flow field, old predictions, new predictions, and perturbed images
             outAttackFlow = sess.run(attackFlow)
+            pred_orig, pred_perb, perturbed_images_np =sess.run(
+                    [self.targetModel .make_pred(images), 
+                     self.targetModel .make_pred(perturbed_images), 
+                     perturbed_images], feed_dict = {images:images_np})
             
-        return outAttackFlow
+            
+        return outAttackFlow, pred_orig, pred_perb, perturbed_images_np
 
     
         
