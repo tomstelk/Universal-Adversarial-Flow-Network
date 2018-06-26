@@ -1,7 +1,18 @@
 import stadv
 import  tensorflow as tf
+import numpy as np
+import pickle
+import datetime
 
-
+def save_obj(obj, name ):
+    with open(name, 'wb') as f:
+        pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
+        
+        
+        
+def load_obj( name):
+    with open(name, 'rb') as f:
+        return pickle.load(f)
 
 
 def targetedAdvRate(target, perb_preds, orig_preds, groundTruth):
@@ -65,26 +76,15 @@ def calcPreds(X_testData, model, modelFile):
         preds_np = sess.run(preds, feed_dict = {images:X_testData})
     
     return preds_np
-    '''
-def calcAdvRateFromPerb(X_test, Y_test, perbFlow, targeted, target, model, modelFile):
     
-    
-    saver = tf.train.Saver()
-    
-    images = tf.constant(X_test)
-    perbFlow_tf = tf.constant(perbFlow)
-    perb_images = stadv.layers.flow_st(images, perbFlow_tf)
-    perb_preds = model.make_pred(perb_images)
-    orig_preds = model.make_pred(images)
-    
-    
-    
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        saver.restore(sess,modelFile)
-        perb_preds_np = sess.run(perb_preds, feed_dict = {images:X_test})
-        orig_preds_np = sess.run(orig_preds, feed_dict = {images:X_test})
-    
-    return advRate(targeted, target, perb_preds_np,orig_preds_np, Y_test)
+def convertOneHot2Labels(oneHotLabels):
+    return [np.where(r==1)[0][0] for r in oneHotLabels]
 
-'''
+def getNowString(date = True):
+    
+    if date:
+        out = str(datetime.datetime.now()).replace(":","-").replace(" ","_")[0:19]
+    else:
+        out = str(datetime.datetime.now().time()).replace(":","-")[0:8]
+        
+    return out

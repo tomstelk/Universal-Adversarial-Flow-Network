@@ -5,20 +5,24 @@ import numpy as np
 import uan_utils 
 class attackFlowUAN():
     
-    def __init__(self,lFlowMax, targetModel, zSize =100, imSize = (28,28), UANname = 'attack', imFormat = 'NHWC', nc=1, targeted=False, advTarget =0, seed=0, tau=0.05):
+    def __init__(self, paramDict):
         
-        self.targetModel = targetModel
-        self.zSize =zSize
-        self.imSize =imSize
-        self.UANname = UANname
-        self.imFormat = imFormat
-        self.nc = nc
-        self.lFlowMax= lFlowMax
-        self.advTarget= advTarget
-        self.targeted = targeted
-        self.seed = seed
-        self.trained = False
-        self.tau = tau
+        
+        
+        self.batchSize = paramDict["batchSize"]
+        self.n_epochs=paramDict["n_epochs"]
+        self.advTarget = paramDict["advTarget"]
+        self.targeted  = paramDict["targeted"]
+        self.lFlowMax = paramDict["lFlowMax"]
+        self.UANname = paramDict["UANname"]
+        self.imFormat = paramDict["imFormat"]
+        self.seed = paramDict["seed"]
+        self.zSize = paramDict["zSize"]
+        self.lrate = paramDict["lrate"]
+        self.tau = paramDict["tau"]
+        self.imSize =paramDict["imSize"]
+        self.nc = paramDict["nc"]
+        
         
     def genAttackFlow(self):
         
@@ -50,12 +54,11 @@ class attackFlowUAN():
         return attackFlowScaled, uan_var_list
     
         
-    def runTrain(self,images_np, labels_np, n_epochs, batchSize,images, 
-                 targets,  targetModelFile , saver, lrate):
+    def runTrain(self,images_np, labels_np,  images, targets,  saver, targetModel, targetModelFile):
 
         #Size data
         trainSetSize = images_np.shape[0]
-        numBatches = int(np.ceil(trainSetSize/batchSize))
+        numBatches = int(np.ceil(trainSetSize/self.batchSize))
         
         #Optimizatio param
         tau_tf = tf.constant(self.tau, dtype=tf.float32, name='tau')        
@@ -64,8 +67,8 @@ class attackFlowUAN():
         attackFlow, uan_var_list = self.genAttackFlow()
         
         #Apply flow field and calculate logits
-        perturbed_images = stadv.layers.flow_st(images, attackFlow, 'NHWC')
-        logits = self.targetModel.get_logits(perturbed_images)
+        perturbed_images = stadv.layers.flow_st(images, attackFlow, self.imFormat)
+        logits = targetModel.get_logits(perturbed_images)
         
         #If targetd use the adv target label, else use correct labels to opt away from
         if self.targeted:        
@@ -81,7 +84,7 @@ class attackFlowUAN():
         L_final = L_adv + tau_tf * L_flow
 
         #Define optimization
-        optim=tf.train.GradientDescentOptimizer(learning_rate = lrate)
+        optim=tf.train.GradientDescentOptimizer(learning_rate = self.lrate)
         train_op = optim.minimize(L_final, var_list = uan_var_list)
         
         
@@ -90,17 +93,17 @@ class attackFlowUAN():
             saver.restore(sess,targetModelFile)
         
     
-            for i in range(n_epochs):
+            for i in range(self.n_epochs):
         
                 for b in range(numBatches):
-                    test_image=images_np[b*batchSize:(b+1)*batchSize]
-                    test_label = trainTargets[b*batchSize:(b+1)*batchSize]
+                    test_image=images_np[b*self.batchSize:(b+1)*self.batchSize]
+                    test_label = trainTargets[b*self.batchSize:(b+1)*self.batchSize]
 
                     sess.run(train_op, feed_dict = {images:test_image,targets: test_label})
                     
                 
-                pred_orig=sess.run(self.targetModel .make_pred(images), feed_dict = {images:images_np})
-                pred_perb=sess.run(self.targetModel .make_pred(perturbed_images), feed_dict = {images:images_np})
+                pred_orig=sess.run(targetModel .make_pred(images), feed_dict = {images:images_np})
+                pred_perb=sess.run(targetModel .make_pred(perturbed_images), feed_dict = {images:images_np})
                 
                 print ('Epoch: ' + str (i) + ', adv rate: ' + 
                        str(100*uan_utils.advRate(self.targeted, self.advTarget,pred_perb, pred_orig,labels_np )) + '%')
@@ -108,12 +111,13 @@ class attackFlowUAN():
             #Output attack flow field, old predictions, new predictions, and perturbed images
             outAttackFlow = sess.run(attackFlow)
             pred_orig, pred_perb, perturbed_images_np =sess.run(
-                    [self.targetModel .make_pred(images), 
-                     self.targetModel .make_pred(perturbed_images), 
+                    [targetModel .make_pred(images), 
+                     targetModel .make_pred(perturbed_images), 
                      perturbed_images], feed_dict = {images:images_np})
             
+            advRateTrain = uan_utils.advRate(self.targeted, self.advTarget,pred_perb, pred_orig,labels_np )
             
-        return outAttackFlow, pred_orig, pred_perb, perturbed_images_np
+        return outAttackFlow, pred_orig, pred_perb, perturbed_images_np,advRateTrain
 
     
         
