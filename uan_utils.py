@@ -49,7 +49,7 @@ def advRate(targeted, target, perb_preds, orig_preds, groundTruth):
 def calcPerbPreds(X_testData, perbFlow, model, modelFile):
     
     saver = tf.train.Saver()
-    images = tf.constant(X_testData)
+    images = tf.constant(X_testData, dtype = tf.float32)
     perbFlow_tf = tf.constant(perbFlow)
     perb_images = stadv.layers.flow_st(images, perbFlow_tf)
     perb_preds = model.make_pred(perb_images)
@@ -66,14 +66,15 @@ def calcPerbPreds(X_testData, perbFlow, model, modelFile):
 def calcPreds(X_testData, model, modelFile):
     
     saver = tf.train.Saver()
-    images = tf.constant(X_testData)
+    images = tf.constant(X_testData, dtype = tf.float32)
     
-    preds = model.make_pred(X_testData)
+    preds = model.make_pred(images)
     
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         saver.restore(sess,modelFile)
-        preds_np = sess.run(preds, feed_dict = {images:X_testData})
+        preds_np = preds.eval()
+        #preds_np = sess.run(preds, feed_dict = {images:X_testData})
     
     return preds_np
     
@@ -88,3 +89,7 @@ def getNowString(date = True):
         out = str(datetime.datetime.now().time()).replace(":","-")[0:8]
         
     return out
+
+def convert2OneHot(indices, numClasses):
+    
+    return np.eye(numClasses)[indices]

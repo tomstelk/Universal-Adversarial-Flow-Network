@@ -3,6 +3,18 @@ import stadv
 import lossesLocal
 import numpy as np
 import uan_utils 
+
+def map2half(inFlow, alpha):
+    
+    theta = tf.atan(inFlow[:,1,:,:]/inFlow[:,0,:,:])+alpha
+    r = tf.sqrt(tf.multiply(inFlow[:,0,:,:],inFlow[:,0,:,:])+
+                tf.multiply(inFlow[:,1,:,:],inFlow[:,1,:,:]))
+    x_new = tf.multiply(r,tf.cos(theta))
+    y_new = tf.multiply(r,tf.sin(theta))
+    
+    return tf.stack([x_new,y_new], axis=1)
+    
+
 class attackFlowUAN():
     
     def __init__(self, paramDict):
@@ -22,6 +34,10 @@ class attackFlowUAN():
         self.tau = paramDict["tau"]
         self.imSize =paramDict["imSize"]
         self.nc = paramDict["nc"]
+        self.directed = paramDict["directed"]
+        self.angle = paramDict["angle"]
+        self.width = paramDict["width"]
+        self.squareLoss = paramDict["squareLoss"]
         
         
     def genAttackFlow(self):
@@ -29,27 +45,61 @@ class attackFlowUAN():
         pre_uan_var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
         tf.set_random_seed(self.seed)
         z = tf.random_normal([1,1,1,self.zSize])
-        #Layer1
-        dc1=tf.layers.conv2d_transpose(z, 1, 256,strides=3,name = self.UANname + '_dc1')
+        
+        #Dconv Layer1
+        dc1=tf.layers.conv2d_transpose(z, 256, kernel_size = 3, strides=1, padding = 'valid', name = self.UANname + '_dc1')
         bn1=tf.layers.batch_normalization(dc1, name=self.UANname + '_bn1')
         r1 = tf.nn.relu(bn1)
         
-        #Layer2
-        '''
-        dc2=tf.layers.conv2d_transpose(r1, 1, 128,strides=5,name = self.UANname + '_dc2')
+        #Dconv Layer2
+        dc2=tf.layers.conv2d_transpose(r1, 128, kernel_size = 3, strides=2, padding = 'same', name = self.UANname + '_dc2')
         bn2=tf.layers.batch_normalization(dc2, name=self.UANname + '_bn2')
         r2 = tf.nn.relu(bn2)
-        '''
         
-        flat1 = tf.layers.flatten(r1, name=self.UANname + '_flat1')
-        fc1 = tf.contrib.layers.fully_connected(flat1, 2*self.imSize[0]*self.imSize[1],  activation_fn=None)
-        attackFlow = tf.reshape(fc1,[1,2,self.imSize[0],self.imSize[1]])
-            
-        scale = self.lFlowMax/stadv.losses.flow_loss(attackFlow)
+        #Dconv Layer3
+        dc3=tf.layers.conv2d_transpose(r2, 64, kernel_size = 3, strides=2, padding = 'same', name = self.UANname + '_dc3')
+        bn3=tf.layers.batch_normalization(dc3, name=self.UANname + '_bn3')
+        r3 = tf.nn.relu(bn3)
+        
+        #Dconv Layer4
+        dc4=tf.layers.conv2d_transpose(r3, 32, kernel_size = 3, strides=2, padding = 'same', name = self.UANname + '_dc4')
+        bn4=tf.layers.batch_normalization(dc4, name=self.UANname + '_bn4')
+        r4 = tf.nn.relu(bn4)
+        
+        #Dconv Layer5
+        dc5=tf.layers.conv2d_transpose(r4, 3, kernel_size = 3, strides=2, padding = 'same', name = self.UANname + '_dc5')
+        bn5=tf.layers.batch_normalization(dc5, name=self.UANname + '_bn5')
+        r5 = tf.nn.relu(bn5)
+                
+        #Flatten
+        flat1 = tf.layers.flatten(r5, name=self.UANname + '_flat1')
+        
+        #Fully Connected L1
+        fc1 = tf.contrib.layers.fully_connected(flat1, 512, activation_fn=None)
+        bn6 = tf.layers.batch_normalization(fc1, name=self.UANname + '_bn6')
+        r6 = tf.nn.relu(bn6)
+        
+        #Fully Connected L2
+        fc2 = tf.contrib.layers.fully_connected(r6, 1024, activation_fn=None)
+        bn7 = tf.layers.batch_normalization(fc2, name=self.UANname + '_bn7')
+        r7 = tf.nn.relu(bn7)
+        
+        
+        fc_Final = tf.contrib.layers.fully_connected(r7, 2*self.imSize[0]*self.imSize[1],  activation_fn=None)
+        
+        
+        #If directed apply map2half function
+        if self.directed:
+            attackFlow = map2half(tf.reshape(fc_Final,[1,2,self.imSize[0],self.imSize[1]]),self.angle)
+        else:
+            attackFlow = tf.reshape(fc_Final,[1,2,self.imSize[0],self.imSize[1]])
+        
+        scale = self.lFlowMax/lossesLocal.flow_loss(attackFlow, padding_mode='CONSTANT' , sqNeighb=self.squareLoss)
         attackFlowScaled=attackFlow*scale
         
         all_var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
         uan_var_list = [v for v in all_var_list if v not in pre_uan_var_list]
+        
         
         return attackFlowScaled, uan_var_list
     
@@ -80,7 +130,7 @@ class attackFlowUAN():
             
             
         #Define loss function
-        L_flow = stadv.losses.flow_loss(attackFlow, padding_mode='CONSTANT')
+        L_flow = lossesLocal.flow_loss(attackFlow, padding_mode='CONSTANT' , sqNeighb=self.squareLoss)
         L_final = L_adv + tau_tf * L_flow
 
         #Define optimization
@@ -117,7 +167,9 @@ class attackFlowUAN():
             
             advRateTrain = uan_utils.advRate(self.targeted, self.advTarget,pred_perb, pred_orig,labels_np )
             
-        return outAttackFlow, pred_orig, pred_perb, perturbed_images_np,advRateTrain
+            attackLFlow = sess.run(lossesLocal.flow_loss(attackFlow,  padding_mode='CONSTANT' , sqNeighb=self.squareLoss))
+            
+        return outAttackFlow, pred_orig, pred_perb, perturbed_images_np,advRateTrain, attackLFlow
 
     
         

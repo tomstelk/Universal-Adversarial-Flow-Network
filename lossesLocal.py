@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 
-def flow_loss(flows, padding_mode='SYMMETRIC'):
+def flow_loss(flows, padding_mode='SYMMETRIC', sqNeighb = True):
     """Computes the flow loss designed to "enforce the locally smooth
     spatial transformation perturbation". See Eq. (4) in Xiao et al.
     (arXiv:1801.02612).
@@ -20,6 +20,8 @@ def flow_loss(flows, padding_mode='SYMMETRIC'):
                             * ``'CONSTANT'``: 0-padding of the boundaries so as
                               to enforce a small flow at the boundary of the
                               images.
+                              
+        sqNeighb (bool): If True neighbourhood is a square, else only 4-diags
 
     Returns:
          1-D `tf.Tensor` of length `B` of the same type as `flows`.
@@ -47,13 +49,25 @@ def flow_loss(flows, padding_mode='SYMMETRIC'):
             flows, paddings, padding_mode, constant_values=0,
             name='padded_flows'
         )
-
-        shifted_flows = [
-            padded_flows[:, :, 2:, 2:],  # bottom right
-            padded_flows[:, :, 2:, :-2],  # bottom left
-            padded_flows[:, :, :-2, 2:],  # top right
-            padded_flows[:, :, :-2, :-2]  # top left
-        ]
+        
+        if sqNeighb:
+            shifted_flows = [
+                    padded_flows[:, :, 2:, 2:],  # bottom right
+                    padded_flows[:, :, 2:, 1:-1],  # bottom mid
+                    padded_flows[:, :, 2:, :-2],  # bottom left
+                    padded_flows[:, :, 1:-1, :-2],  # mid left
+                    padded_flows[:, :, :-2, :-2],   # top left
+                    padded_flows[:, :, :-2, 1:-1],   # top mid
+                    padded_flows[:, :, :-2, 2:],  # top right
+                    padded_flows[:, :, 1:-1, 2:],  # mid right
+                    ]
+        else:
+            shifted_flows = [
+                    padded_flows[:, :, 2:, 2:],  # bottom right
+                    padded_flows[:, :, 2:, :-2],  # bottom left
+                    padded_flows[:, :, :-2, 2:],  # top right
+                    padded_flows[:, :, :-2, :-2]  # top left
+                    ]
 
         return tf.add_n(
             [
